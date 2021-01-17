@@ -1,5 +1,3 @@
-#include <Arduino.h>
-
 /**
  * Example how to connect an ESP32 to Sensirion's SmartGadget
  * with SHT31 temperature and humidity sensor
@@ -16,15 +14,160 @@
  * Extended for TTGO T1 ESP32 GAdget and MQTT by Maurin Widmer, 2021
  */
 
+#include <Arduino.h>
+
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <WiFiClient.h>
+#include <Time.h>
+
 #include "BLEDevice.h"
 
+// load Wifi credentials
 #include "credentials.h"
 
-//#define DEBUG 
+/**********************************************************************************************/
+
+#define mqtt_server "lumicsraspi4" //CHANGE MQTT Broker address
+#define mqtt_port 1883 // define MQTT port
+#define mqtt_user "your_username" //not used, make a change in the mqtt initializer
+#define mqtt_password "your_password" //not used, make a change in the mqtt initializer
+String ssid = WIFI_SSID;      //CHANGE (WiFi Name)
+String pwd = WIFI_PASSWD;      //CHANGE (WiFi password)
+String sensor_location = "freezer"; // define sensor location
 
 //Define the last 4 digits of the Smart Gadget (shown when ble is turned on)
 #define SmartGadgetAdr "8c:84"
 
+const int publish_every_s = 15; //only read publish sensor every 15s
+
+//#define DEBUG 
+
+#define sw_version "v1.0" // Define Software Version
+/***********************************************************************************************/
+
+//values
+float t, rh, bat;
+
+//display
+// This Gadget has a 1.14inch TFT display with a width of 135 and a height of 240
+#include <TFT_eSPI.h> // Graphics and font library for ST7735 driver chip
+#include <SPI.h>
+TFT_eSPI tft = TFT_eSPI(135,240);  // Invoke library, pins defined in User_Setup.h
+
+// Display related
+#define SENSIRION_GREEN 0x6E66
+
+#define GFXFF 1
+#define FSS9 &FreeSans9pt7b
+#define FSS12 &FreeSans12pt7b
+#define FSS18 &FreeSans18pt7b
+#define FSS24 &FreeSans24pt7b
+
+//wifi stuff
+String mac;
+String MAC_ADDRESS;
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+String sensor_topic = "sensors/" + sensor_location + "/sht31";
+String device_type = "HumiGadget";
+String device_name = "esp32";
+
+int wifi_setup_timer = 0;
+int publish_counter = 0;
+
+// Functions
+
+// System and Wifi
+unsigned long elapsed_time(unsigned long start_time_ms)
+{
+  return millis() - start_time_ms;
+}
+
+
+void setup_wifi() {
+  char ssid1[30];
+  char pass1[30];
+  ssid.toCharArray(ssid1, 30);
+  pwd.toCharArray(pass1, 30);
+  Serial.println();
+  Serial.print("Connecting to: " + String(ssid1));
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid1, pass1);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(10);
+    Serial.print(".");
+    wifi_setup_timer ++;
+    if (wifi_setup_timer > 999) {     //Restart the ESP if no connection can be established
+      ESP.restart();                 
+    }
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void reconnect() {                                                  //Reconnect to the MQTT server
+  while (!mqttClient.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    char id[mac.length() + 1];
+    mac.toCharArray(id, mac.length() + 1);
+    if (mqttClient.connect(id)) {
+      Serial.println("connected");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" try again in 5 seconds");
+      delay(100);
+    }
+  }
+}
+
+// display functions
+void display_values(){
+  tft.setFreeFont(FSS9);
+  tft.fillScreen(TFT_BLACK);
+  tft.drawString("T", 10, 120, GFXFF);
+  tft.drawString("RH", 210, 120, GFXFF);
+  tft.drawFastVLine(120, 0, 120, TFT_WHITE);
+
+  tft.setFreeFont(FSS24);
+  tft.setTextColor(SENSIRION_GREEN);
+  tft.drawString(String(int(round(t))), 20, 40, GFXFF);
+  tft.drawString(String(int(round(rh))), 150, 40, GFXFF);
+
+  Serial.println("new values to display send");
+
+}
+
+void display_error(){
+  tft.setTextSize(1);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  // display mac address
+  tft.drawString("Error", 30,20, 4);
+  tft.drawString("I/O Sensor", 10,50, 4);
+  tft.drawString(mac, 180, 120, 2);
+
+
+  Serial.println("Sensor is not responding");
+}
+
+void publish_data() {
+// Check whether connection to the broker is true
+  if (!mqttClient.connected() && WiFi.status() == WL_CONNECTED) {
+    Serial.println("Client got disconnected from Broker.");
+    reconnect();
+  }
+  mqttClient.publish((sensor_topic + "/T").c_str(), ("T,site="+ sensor_location +" value=" + String(t)).c_str(), false);
+  mqttClient.publish((sensor_topic + "/RH").c_str(), ("RH,site="+ sensor_location +" value=" + String(rh)).c_str(), false);
+  Serial.println("Data published");
+}
+
+
+
+//BLE
 // The remote service we wish to connect to.
 static BLEUUID serviceUUID_t("00002234-B38D-4985-720E-0F993A68EE41");
 // The characteristic of the remote service we are interested in.
@@ -49,7 +192,7 @@ static BLERemoteCharacteristic* pRemoteCharacteristic_rh;
 static BLERemoteCharacteristic* pRemoteCharacteristic_bat;
 static BLEAdvertisedDevice* myDevice;
 
-float t, rh, bat;
+
 
 union u_tag {
    byte b[4];
@@ -293,6 +436,31 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 
 void setup() {
   Serial.begin(115200);
+
+// Setup Display
+  tft.init();
+  tft.setRotation(1); 
+  tft.setTextSize(1);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    
+  tft.drawString("Humi Reader", 30,20, 4);
+  tft.drawString("Connecting to Wifi", 10,50, 4);
+  tft.drawString(sw_version, 95,90, 4);
+  delay(1000);
+
+  // Wifi
+  setup_wifi();                                      //connect to wifi
+  mqttClient.setServer(mqtt_server, mqtt_port);               //connect wo MQTT server
+
+//get MAC address
+  MAC_ADDRESS = WiFi.macAddress();                    
+  Serial.println(MAC_ADDRESS);
+   //shorten MAC address to the last four digits (without ":")
+  mac =  MAC_ADDRESS.substring(9, 11) + MAC_ADDRESS.substring(12, 14) + MAC_ADDRESS.substring(15, 17);  
+
+
+
   #ifdef DEBUG
     Serial.println("Starting Arduino BLE Client application...");
   #endif
@@ -335,9 +503,19 @@ void loop() {
     Serial.println(t);
     Serial.print("RH: ");
     Serial.println(rh);
+
+    display_values();
+    
+    if(publish_counter >= publish_every_s){
+      publish_data();
+      publish_counter = 0;
+    }
+    publish_counter++;
+
   }else if(doScan){
     BLEDevice::getScan()->start(0);  // this is just eample to start scan after disconnect, most likely there is better way to do it in arduino
+    display_error();
   }
-  
+   mqttClient.loop();
   delay(1000);
 }
