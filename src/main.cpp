@@ -11,7 +11,7 @@
  * 
  * changed for SmartGadget by DLE Jan. 2021
  * 
- * Extended for TTGO T1 ESP32 GAdget and MQTT by Maurin Widmer, 2021
+ * Extended for TTGO T1 ESP32 Gadget and MQTT by Maurin Widmer, 2021
  */
 
 #include <Arduino.h>
@@ -79,12 +79,6 @@ int publish_counter = 0;
 // Functions
 
 // System and Wifi
-unsigned long elapsed_time(unsigned long start_time_ms)
-{
-  return millis() - start_time_ms;
-}
-
-
 void setup_wifi() {
   char ssid1[30];
   char pass1[30];
@@ -162,10 +156,9 @@ void publish_data() {
   }
   mqttClient.publish((sensor_topic + "/T").c_str(), ("T,site="+ sensor_location +" value=" + String(t)).c_str(), false);
   mqttClient.publish((sensor_topic + "/RH").c_str(), ("RH,site="+ sensor_location +" value=" + String(rh)).c_str(), false);
+  mqttClient.publish((sensor_topic + "/BAT").c_str(), ("BAT,site="+ sensor_location +" value=" + String(bat)).c_str(), false);
   Serial.println("Data published");
 }
-
-
 
 //BLE
 // The remote service we wish to connect to.
@@ -257,7 +250,7 @@ static void notifyCallback_bat(
       Serial.print(" of data length ");
       Serial.println(length);
     #endif
-    
+    bat = pData[0];
     Serial.print(pData[0]);
     Serial.print("\t");    
 }
@@ -419,11 +412,8 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
       Serial.print("BLE Advertised Device found: ");
       Serial.println(advertisedDevice.toString().c_str());
     #endif
-    
-    
-    //if (advertisedDevice.getName() == "Smart Humigadget") { // then it would connect to the first foudn gadget called like that
-    //if (advertisedDevice.getAddress().toString() == "c0:39:41:a8:8c:84") { // hardcoding the BLE Address of the Humi Gadget to make sure t only connect to right device
-    if ((advertisedDevice.getAddress().toString().find(SmartGadgetAdr) != std::string::npos ) && (advertisedDevice.getName() == "Smart Humigadget")) { // hardcoding the BLE Address of the HUmi Gadget to make sure t oonly connect to right device
+    // hardcoding the last 4 digits of mac BLE Address of the Humi Gadget to make sure to only connect to right device
+    if ((advertisedDevice.getAddress().toString().find(SmartGadgetAdr) != std::string::npos ) && (advertisedDevice.getName() == "Smart Humigadget")) { 
       BLEDevice::getScan()->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
       doConnect = true;
@@ -435,36 +425,33 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 
 
 void setup() {
+  //Serial
   Serial.begin(115200);
 
-// Setup Display
+  // Setup Display
   tft.init();
   tft.setRotation(1); 
   tft.setTextSize(1);
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    
   tft.drawString("Humi Reader", 30,20, 4);
   tft.drawString("Connecting to Wifi", 10,50, 4);
   tft.drawString(sw_version, 95,90, 4);
-  delay(1000);
+  delay(100);
 
   // Wifi
   setup_wifi();                                      //connect to wifi
   mqttClient.setServer(mqtt_server, mqtt_port);               //connect wo MQTT server
-
-//get MAC address
+  //get MAC address
   MAC_ADDRESS = WiFi.macAddress();                    
   Serial.println(MAC_ADDRESS);
    //shorten MAC address to the last four digits (without ":")
   mac =  MAC_ADDRESS.substring(9, 11) + MAC_ADDRESS.substring(12, 14) + MAC_ADDRESS.substring(15, 17);  
 
-
-
+  //BLE
   #ifdef DEBUG
     Serial.println("Starting Arduino BLE Client application...");
   #endif
-  Serial.println("realtive_humidity\ttemperature");
   BLEDevice::init("");
 
   // Retrieve a Scanner and set the callback we want to use to be informed when we
@@ -498,7 +485,6 @@ void loop() {
   }
   
   if (connected) {
-    // do nothing specific here, services are using the notification system
     Serial.print("Temp: ");
     Serial.println(t);
     Serial.print("RH: ");
@@ -513,7 +499,7 @@ void loop() {
     publish_counter++;
 
   }else if(doScan){
-    BLEDevice::getScan()->start(0);  // this is just eample to start scan after disconnect, most likely there is better way to do it in arduino
+    BLEDevice::getScan()->start(0);  // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
     display_error();
   }
    mqttClient.loop();
