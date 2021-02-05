@@ -28,16 +28,17 @@
 
 /**********************************************************************************************/
 
-#define mqtt_server "lumicsraspi4" //CHANGE MQTT Broker address
+#define mqtt_server "buendner" //CHANGE MQTT Broker address
 #define mqtt_port 1883 // define MQTT port
 #define mqtt_user "your_username" //not used, make a change in the mqtt initializer
 #define mqtt_password "your_password" //not used, make a change in the mqtt initializer
 String ssid = WIFI_SSID;      //CHANGE (WiFi Name)
 String pwd = WIFI_PASSWD;      //CHANGE (WiFi password)
-String sensor_location = "freezer"; // define sensor location
+String sensor_location = "balcony"; // define sensor location
 
 //Define the last 4 digits of the Smart Gadget (shown when ble is turned on)
-#define SmartGadgetAdr "8c:84"
+#define SmartGadgetAdr "5e:24" //write characters in small letters!
+//#define SmartGadgetAdr "8c:84" //write characters in small letters!
 
 const int publish_every_s = 15; //only read publish sensor every 15s
 
@@ -128,8 +129,10 @@ void display_values(){
 
   tft.setFreeFont(FSS24);
   tft.setTextColor(SENSIRION_GREEN);
-  tft.drawString(String(int(round(t))), 20, 40, GFXFF);
-  tft.drawString(String(int(round(rh))), 150, 40, GFXFF);
+  tft.drawString(String(int(round(t))), 10, 40, GFXFF);
+  tft.drawString(String(int(round(rh))), 140, 40, GFXFF);
+  tft.drawString("C", 70, 40, GFXFF);
+  tft.drawString("%", 200, 40, GFXFF);
 
   Serial.println("new values to display send");
 
@@ -157,6 +160,9 @@ void publish_data() {
   mqttClient.publish((sensor_topic + "/T").c_str(), ("T,site="+ sensor_location +" value=" + String(t)).c_str(), false);
   mqttClient.publish((sensor_topic + "/RH").c_str(), ("RH,site="+ sensor_location +" value=" + String(rh)).c_str(), false);
   mqttClient.publish((sensor_topic + "/BAT").c_str(), ("BAT,site="+ sensor_location +" value=" + String(bat)).c_str(), false);
+  mqttClient.publish((sensor_topic + "/Homebridge/BAT").c_str(), (String(bat)).c_str(), false);
+  mqttClient.publish((sensor_topic + "/Homebridge/T").c_str(), (String(t)).c_str(), false);
+  mqttClient.publish((sensor_topic + "/Homebridge/RH").c_str(), (String(rh)).c_str(), false);
   Serial.println("Data published");
 }
 
@@ -414,6 +420,7 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     #endif
     // hardcoding the last 4 digits of mac BLE Address of the Humi Gadget to make sure to only connect to right device
     if ((advertisedDevice.getAddress().toString().find(SmartGadgetAdr) != std::string::npos ) && (advertisedDevice.getName() == "Smart Humigadget")) { 
+    //if ((advertisedDevice.getName() == "Smart Humigadget")) { 
       BLEDevice::getScan()->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
       doConnect = true;
